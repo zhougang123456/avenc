@@ -3,7 +3,7 @@
 #include <string.h>
 #include "avencoder.hpp"
 #define DEFAULT_BIT_RATE 10000000
-#define DEFAULT_FRAME_RATE 25
+#define DEFAULT_FRAME_RATE 33
 #define DUMP_H264
 #ifdef  DUMP_H264
 #define DUMP_FILE_NAME "output.h264"
@@ -59,7 +59,8 @@ bool AvEncoder::init(char* codec_name, int width, int height)
     context->qmin = 15;
     context->qmax = 35;
     if (codec->id == AV_CODEC_ID_H264) {
-        av_opt_set(context->priv_data, "preset", "fast", 0);
+        av_opt_set(context->priv_data, "preset", "ultrafast", 0);
+        av_opt_set(context->priv_data, "tune", "zerolatency", 0);
         av_opt_set(context->priv_data, "profile", "baseline", 0);
     }
     int ret = avcodec_open2(context, codec, NULL);
