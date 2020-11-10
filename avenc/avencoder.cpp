@@ -2,6 +2,10 @@
 #include <stdlib.h>
 #include <string.h>
 #include "avencoder.hpp"
+#include "libyuv.h"
+#include <time.h>
+#include <Windows.h>
+
 #define DEFAULT_BIT_RATE 10000000
 #define DEFAULT_FRAME_RATE 33
 #define DUMP_H264
@@ -9,6 +13,26 @@
 #define DUMP_FILE_NAME "output.h264"
 static FILE* f = NULL;
 #endif //  DUMP_H264
+
+static inline uint64_t get_time()
+{
+    time_t clock;
+    timeval now;
+    struct tm tm;
+    SYSTEMTIME wtm;
+    GetLocalTime(&wtm);
+    tm.tm_year = wtm.wYear - 1900;
+    tm.tm_mon = wtm.wMonth - 1;
+    tm.tm_mday = wtm.wDay;
+    tm.tm_hour = wtm.wHour;
+    tm.tm_min = wtm.wMinute;
+    tm.tm_sec = wtm.wSecond;
+    tm.tm_isdst = -1;
+    clock = mktime(&tm);
+    now.tv_sec = clock;
+    now.tv_usec = wtm.wMilliseconds * 1000;
+    return (uint64_t)now.tv_sec * 1000000 + (uint64_t)now.tv_usec;
+}
 
 AvEncoder::AvEncoder()
 {
@@ -58,6 +82,7 @@ bool AvEncoder::init(char* codec_name, int width, int height)
     context->pix_fmt = AV_PIX_FMT_YUV420P;
     context->qmin = 15;
     context->qmax = 35;
+    context->thread_count = 4;
     if (codec->id == AV_CODEC_ID_H264) {
         av_opt_set(context->priv_data, "preset", "ultrafast", 0);
         av_opt_set(context->priv_data, "tune", "zerolatency", 0);
@@ -69,11 +94,11 @@ bool AvEncoder::init(char* codec_name, int width, int height)
         return false;
     }
 #ifdef DUMP_H264
-    f = fopen(DUMP_FILE_NAME, "wb");
+    /*f = fopen(DUMP_FILE_NAME, "wb");
     if (!f) {
         printf("Could not open %s\n", DUMP_FILE_NAME);
         return false;
-    }
+    }*/
 #endif // DUMP_H264
 
     pkt = av_packet_alloc();
@@ -107,9 +132,11 @@ bool AvEncoder::init(char* codec_name, int width, int height)
 void AvEncoder::encode(unsigned char* buffer)
 {
     av_image_fill_arrays(frmArgb->data, frmArgb->linesize, buffer, AV_PIX_FMT_RGBA, context->width, context->height, 32);
-    rgba_to_yuv420(frmArgb, frm420p);
     int ret;
     static int j = 0;
+        rgba_to_yuv420(frmArgb, frm420p);
+    
+    
     frm420p->pts = ++j;
     /* send the frame to the encoder */
     if (frm420p) {
@@ -132,7 +159,11 @@ void AvEncoder::encode(unsigned char* buffer)
 
         printf("Write packet %3lld(size=%5d)\n", pkt->pts, pkt->size);
 #ifdef DUMP_H264
+        char file[200];
+        sprintf(file, "%d.h264", j);
+        f = fopen(file, "wb");
         fwrite(pkt->data, 1, pkt->size, f);
+        fclose(f);
 #endif // DUMP_H264
 
         av_packet_unref(pkt);
@@ -140,13 +171,15 @@ void AvEncoder::encode(unsigned char* buffer)
 }
 bool AvEncoder::rgba_to_yuv420(AVFrame* frmArgb, AVFrame* frm420p)
 {   
-    //指定原数据格式，分辨率及目标数据格式，分辨率
+    uint64_t start = get_time();
+    libyuv::ARGBToI420(frmArgb->data[0], frmArgb->linesize[0], frm420p->data[0], frm420p->linesize[0], frm420p->data[1], frm420p->linesize[1], frm420p->data[2], frm420p->linesize[2], context->width, context->height);
+    uint64_t end = get_time();
+    printf("yuv time is %u", end - start);
+    //return true;
     struct SwsContext* sws = sws_getContext(context->width, context->height, AV_PIX_FMT_RGBA, 
-        context->width, context->height, AV_PIX_FMT_YUV420P, SWS_BILINEAR, NULL, NULL, NULL);
-    //转换
+        context->width, context->height, AV_PIX_FMT_YUV420P, SWS_POINT, NULL, NULL, NULL);
     int ret = sws_scale(sws, frmArgb->data, frmArgb->linesize, 0, context->height, frm420p->data, frm420p->linesize);
-    //av_frame_free(&frmArgb);
-    //av_frame_free(&frm420p);
+    printf("scale time is %u", get_time() - end);
     sws_freeContext(sws);
     return  (ret == context->height) ? true : false;
 }
